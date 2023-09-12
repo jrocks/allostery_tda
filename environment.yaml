@@ -1,0 +1,21 @@
+name: allo_tda
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - babel=2.11.0=py311hca03da5_0
+  - biopython=1.81=py311he2be06e_0
+  - gemmi=0.6.0=py311h7b25133_1
+  - jupyter=1.0.0=py311hca03da5_8
+  - matplotlib=3.7.1=py311hca03da5_1
+  - nb_conda_kernels=2.3.1=py311h267d04e_2
+  - numba=0.57.0=py311h7aedaa7_0
+  - numpy=1.24.3=py311hb57d4eb_0
+  - openbabel=3.1.1=py311h6cc52c5_5
+  - pandas=2.0.3=py311h7aedaa7_0
+  - pymol-open-source=2.5.0=py311hefa5e20_6
+  - python=3.11.5=h47c9636_0_cpython
+  - scipy=1.11.1=py311hc76d9b0_0
+  - pip:
+    - pdbe-arpeggio==1.4.2
+prefix: /opt/miniconda3/envs/allo_tda
