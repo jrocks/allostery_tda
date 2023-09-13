@@ -211,8 +211,6 @@ def find_hinge(df_merged, df_bonds_merged, N_sectors=2, min_size=None):
 
     skeleton, boundary_edges = topo.find_skeleton(edgei, edgej, lrmsd)
     
-    
-    
     hinge_scale, hinge_overlap, sectors_to_verts, verts_to_sectors, sector_boundary_edges = topo.find_hinge(skeleton, boundary_edges, edgei, edgej, x_ref, disp, lrmsd, N_sectors=N_sectors, linear=False, min_size=min_size, maximize_overlap=False)
     
     return hinge_scale, hinge_overlap, sectors_to_verts

@@ -197,11 +197,17 @@ def find_skeleton(edgei, edgej, F, ascending=True):
 
 @njit
 def find_sectors(skeleton, NV, edgei, edgej):
+    """
+    Could be optimized with a union-find algorithm.
+    """
+    
+    
     
     # Map of sectors to sets of vertices.
     # Each sector is initialized to contain exactly one vertex.
     sectors_to_verts = List([List([np.int32(vi)]) for vi in range(NV)])
     # Inverse map of vertices to sectors.
+    # verts_to_sectors = List([vi for vi in range(NV)])
     verts_to_sectors = List([vi for vi in range(NV)])
 
     # Iterate through each edge.
@@ -211,6 +217,9 @@ def find_sectors(skeleton, NV, edgei, edgej):
 
         si = verts_to_sectors[vi]
         sj = verts_to_sectors[vj]
+        
+        if si == sj:
+            continue
 
         # Merge sector sj to sector si.
         for vk in sectors_to_verts[sj]:
@@ -218,16 +227,17 @@ def find_sectors(skeleton, NV, edgei, edgej):
 
         sectors_to_verts[si].extend(sectors_to_verts[sj])
         
-        # empty list
-        sectors_to_verts[sj] = List([np.int32(vk) for vk in range(0)])
-                
+        # clear list for sector sj
+        sectors_to_verts[sj].clear()
+            
+            
     reduction_map = {}    
     reduced_sectors_to_verts = List()
     for si in range(NV):
         if len(sectors_to_verts[si]) > 0:
             reduction_map[si] = len(reduced_sectors_to_verts)
             reduced_sectors_to_verts.append(sectors_to_verts[si])
-     
+    
     reduced_verts_to_sectors = List()
     for vi in range(NV):
         reduced_verts_to_sectors.append(reduction_map[verts_to_sectors[vi]])
@@ -292,7 +302,8 @@ def find_strain_paths(source_sites, target_sites, skeleton, edgei, edgej, lrmsd,
     
     path_scales = np.array(path_scales)[asort]
     path_lengths = np.array(path_lengths)[asort]
-    strain_paths = np.array(strain_paths)[asort]
+    # need to be more careful when sorting list of lists
+    strain_paths = [strain_paths[i] for i in asort]
         
     return path_scales, path_lengths, strain_paths, max_edge_scale
 
