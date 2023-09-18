@@ -185,7 +185,7 @@ def show_disp(index):
     cmd.color(gray)
     
     #import modevector script
-    cmd.run("python_src/modevectors.py")
+    cmd.run("src/modevectors.py")
     
     scale = 0.7
     modevectors("merged_deformed", "merged_reference", headrgb="0.0,0.0,0.0", tailrgb="0.0,0.0,0.0", cutoff=2.0, 

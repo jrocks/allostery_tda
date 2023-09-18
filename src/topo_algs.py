@@ -310,41 +310,66 @@ def find_strain_paths(source_sites, target_sites, skeleton, edgei, edgej, lrmsd,
 @njit
 def find_hinge(skeleton, boundary_edges, edgei, edgej, pos, disp, lrmsd, N_sectors=2, linear=False, min_size=None, maximize_overlap=False):
     
+    
     DIM = 3
     NV = len(pos)//DIM
     
     if min_size is None:
         min_size = DIM
-    
-    
+        
+    # first create coarse-grained skeleton where each sector in original skeleton is a node and each boundary edge is an edge
     skeleton = set(skeleton)
+    reduced_skeleton = List(skeleton-set(boundary_edges))
+    coarse_sectors_to_verts, coarse_verts_to_sectors = find_sectors(reduced_skeleton, NV, edgei, edgej)
+        
+    # edges in coarse-grained skeleton
+    coarse_NV = len(coarse_sectors_to_verts)
+    coarse_skeleton = set(np.arange(len(boundary_edges)))
+    coarse_edgei = List()
+    coarse_edgej = List()
+    coarse_boundary_edge_map = {}
+    boundary_maxes = []
+    for i, bi in enumerate(boundary_edges):
+        coarse_boundary_edge_map[i] = bi
+        coarse_edgei.append(coarse_verts_to_sectors[edgei[bi]])
+        coarse_edgej.append(coarse_verts_to_sectors[edgej[bi]])
+        
+        # precompute boundary max for edge boundary edge
+        boundary_maxes.append(max([lrmsd[edgei[bi]], lrmsd[edgej[bi]]]))
     
-    max_hinge_scale = -1.0
+    # precompute minimum in each sector
+    sector_mins = [np.min(lrmsd[np.array(list(sector), np.int32)]) for sector in coarse_sectors_to_verts]
+            
+    max_hinge_scale = 0.0
     max_hinge_overlap = 0.0
     
+    # set of selected boundary edges so far (in coarse-grained skeleton)
+    sector_boundary_edges = set([vi for vi in range(0)])
+    
     # use greedy algorithm to choose boundary edges
-    sector_boundary_edges = set()
     for n in range(N_sectors-1):
 
         # reset selection
-        # only want to keep track of hinge scale for lest set of identified hinge sectors
-        max_hinge_scale = -1.0
+        # only want to keep track of hinge scale for least set of identified hinge sectors
+        max_hinge_scale = 0.0
         max_hinge_overlap = 0.0
         selected_edge = -1
         
-        # iterate through each boundary edge
-        for i, bi in enumerate(boundary_edges):
+        # iterate through each boundary edge in coarse-grained skeleton
+        for bi in np.arange(len(boundary_edges)):
             
             # skip edges that have already been selected as boundary edges
             if bi in sector_boundary_edges:
                 continue
                 
-            reduced_skeleton = List(skeleton-{bi}-sector_boundary_edges)
+                
             # remove boundary edge and identify sectors
-            sectors_to_verts, verts_to_sectors = find_sectors(reduced_skeleton, NV, edgei, edgej)
+            reduced_skeleton = List(coarse_skeleton-{bi}-sector_boundary_edges)
+            sectors_to_verts, verts_to_sectors = find_sectors(reduced_skeleton, coarse_NV, coarse_edgei, coarse_edgej)
 
             # calculate min sector size
-            sector_sizes = [len(sectors_to_verts[si]) for si in range(len(sectors_to_verts))]
+            sector_sizes = [np.sum(np.array([len(coarse_sectors_to_verts[vi]) for vi in sectors_to_verts[si]], np.int32)) for si in range(len(sectors_to_verts))]
+                        
             min_sector_size = np.array(sector_sizes).min()
 
 
@@ -353,67 +378,75 @@ def find_hinge(skeleton, boundary_edges, edgei, edgej, pos, disp, lrmsd, N_secto
                 continue
   
             if maximize_overlap:
-                overlap = deform.calc_hinge_overlap(sectors_to_verts, pos, disp, linear=linear)
+                pass
+#                 overlap = deform.calc_hinge_overlap(sectors_to_verts, pos, disp, linear=linear)
         
-                if overlap > max_hinge_overlap:
-                    max_hinge_overlap = overlap
-                    selected_edge = bi
+#                 if overlap > max_hinge_overlap:
+#                     max_hinge_overlap = overlap
+#                     selected_edge = bi
                     
                     
-                    # calculate hinge scale
-                    # calculate difference in deformation at hinge boundary from least uniform sector
-                    boundary_max = np.max(np.array([lrmsd[edgei[bi]], lrmsd[edgej[bi]]]))
+#                     # calculate hinge scale
+#                     # calculate difference in deformation at hinge boundary from least uniform sector
+#                     boundary_max = np.max(np.array([lrmsd[edgei[bi]], lrmsd[edgej[bi]]]))
 
-                    si = verts_to_sectors[edgei[bi]]
-                    sj = verts_to_sectors[edgej[bi]]
+#                     si = verts_to_sectors[edgei[bi]]
+#                     sj = verts_to_sectors[edgej[bi]]
 
-                    si_min = np.min(lrmsd[np.array(list(sectors_to_verts[si]), np.int32)])
-                    sj_min = np.min(lrmsd[np.array(list(sectors_to_verts[sj]), np.int32)])
+#                     si_min = np.min(lrmsd[np.array(list(sectors_to_verts[si]), np.int32)])
+#                     sj_min = np.min(lrmsd[np.array(list(sectors_to_verts[sj]), np.int32)])
 
-                    hinge_scale = boundary_max - np.max(np.array([si_min, sj_min]))
+#                     hinge_scale = boundary_max - np.max(np.array([si_min, sj_min]))
                     
-                    max_hinge_scale = hinge_scale
+#                     max_hinge_scale = hinge_scale
 
-                    print(i, "/", len(boundary_edges))
-                    print("Hinge Scale:", hinge_scale, "Overlap:", overlap)
-                    print("Sector Sizes:", sector_sizes)
+#                     print(i, "/", len(boundary_edges))
+#                     print("Hinge Scale:", hinge_scale, "Overlap:", overlap)
+#                     print("Sector Sizes:", sector_sizes)
         
             else:
                                             
                 # calculate hinge scale
                 # calculate difference in deformation at hinge boundary from least uniform sector
-                boundary_max = np.max(np.array([lrmsd[edgei[bi]], lrmsd[edgej[bi]]]))
-
-                si = verts_to_sectors[edgei[bi]]
-                sj = verts_to_sectors[edgej[bi]]
-
-                si_min = np.min(lrmsd[np.array(list(sectors_to_verts[si]), np.int32)])
-                sj_min = np.min(lrmsd[np.array(list(sectors_to_verts[sj]), np.int32)])
-
-                hinge_scale = boundary_max - np.max(np.array([si_min, sj_min]))
             
-                if hinge_scale > max_hinge_scale:
+                si_min = min([sector_mins[i] for i in sectors_to_verts[verts_to_sectors[coarse_edgei[bi]]]])
+                sj_min = min([sector_mins[i] for i in sectors_to_verts[verts_to_sectors[coarse_edgej[bi]]]])
+                
+                hinge_scale = boundary_maxes[bi] - max([si_min, sj_min])
+            
+                if hinge_scale > max_hinge_scale or max_hinge_scale == 0.0:
                     max_hinge_scale = hinge_scale
                     selected_edge = bi
                     
-                    overlap = deform.calc_hinge_overlap(sectors_to_verts, pos, disp, linear=linear)
+                    full_sectors_to_verts = List()
+                    for si, sector in enumerate(sectors_to_verts):
+                        full_sector = List()
+                        for vi in sector:
+                            full_sector.extend(coarse_sectors_to_verts[vi])
+                            
+                        full_sectors_to_verts.append(full_sector)
+                    
+                    overlap = deform.calc_hinge_overlap(full_sectors_to_verts, pos, disp, linear=linear)
                 
                     max_hinge_overlap = overlap
                     
                     
-                    print(i, "/", len(boundary_edges))
+                    print(bi, "/", len(boundary_edges))
                     print("Hinge Scale:", hinge_scale, "Overlap:", overlap)
                     print("Sector Sizes:", sector_sizes)
                     
             
         # add selected edge to list of boundary edges
-        sector_boundary_edges.add(selected_edge)
+        if selected_edge != -1:
+            sector_boundary_edges.add(selected_edge)
                   
-            
+
     if len(sector_boundary_edges) == 0:
         return 0.0, 0.0, None, None, None
-        
-        
+            
+    # convert selected boundary edges to original indexes in full network
+    sector_boundary_edges = [coarse_boundary_edge_map[bi] for bi in sector_boundary_edges]
+    
     reduced_skeleton = List(skeleton-set(sector_boundary_edges))
     # remove boundary edge and identify sectors
     sectors_to_verts , verts_to_sectors = find_sectors(reduced_skeleton, NV, edgei, edgej)
@@ -424,5 +457,127 @@ def find_hinge(skeleton, boundary_edges, edgei, edgej, pos, disp, lrmsd, N_secto
     print("Sector Sizes:", sector_sizes)
         
     return max_hinge_scale, max_hinge_overlap, sectors_to_verts, verts_to_sectors, List(sector_boundary_edges)
+    
+
+    
+    
+# @njit
+# def find_hinge(skeleton, boundary_edges, edgei, edgej, pos, disp, lrmsd, N_sectors=2, linear=False, min_size=None, maximize_overlap=False):
+    
+    
+#     DIM = 3
+#     NV = len(pos)//DIM
+    
+#     if min_size is None:
+#         min_size = DIM
+    
+    
+#     skeleton = set(skeleton)
+    
+#     max_hinge_scale = -1.0
+#     max_hinge_overlap = 0.0
+    
+#     # use greedy algorithm to choose boundary edges
+#     sector_boundary_edges = set()
+#     for n in range(N_sectors-1):
+
+#         # reset selection
+#         # only want to keep track of hinge scale for lest set of identified hinge sectors
+#         max_hinge_scale = -1.0
+#         max_hinge_overlap = 0.0
+#         selected_edge = -1
+        
+#         # iterate through each boundary edge
+#         for i, bi in enumerate(boundary_edges):
+            
+#             # skip edges that have already been selected as boundary edges
+#             if bi in sector_boundary_edges:
+#                 continue
+                
+#             reduced_skeleton = List(skeleton-{bi}-sector_boundary_edges)
+#             # remove boundary edge and identify sectors
+#             sectors_to_verts, verts_to_sectors = find_sectors(reduced_skeleton, NV, edgei, edgej)
+
+#             # calculate min sector size
+#             sector_sizes = [len(sectors_to_verts[si]) for si in range(len(sectors_to_verts))]
+#             min_sector_size = np.array(sector_sizes).min()
+
+
+#             # skip edges that create sectors smaller than the smallest allowed size
+#             if min_sector_size < min_size:
+#                 continue
+  
+#             if maximize_overlap:
+#                 overlap = deform.calc_hinge_overlap(sectors_to_verts, pos, disp, linear=linear)
+        
+#                 if overlap > max_hinge_overlap:
+#                     max_hinge_overlap = overlap
+#                     selected_edge = bi
+                    
+                    
+#                     # calculate hinge scale
+#                     # calculate difference in deformation at hinge boundary from least uniform sector
+#                     boundary_max = np.max(np.array([lrmsd[edgei[bi]], lrmsd[edgej[bi]]]))
+
+#                     si = verts_to_sectors[edgei[bi]]
+#                     sj = verts_to_sectors[edgej[bi]]
+
+#                     si_min = np.min(lrmsd[np.array(list(sectors_to_verts[si]), np.int32)])
+#                     sj_min = np.min(lrmsd[np.array(list(sectors_to_verts[sj]), np.int32)])
+
+#                     hinge_scale = boundary_max - np.max(np.array([si_min, sj_min]))
+                    
+#                     max_hinge_scale = hinge_scale
+
+#                     print(i, "/", len(boundary_edges))
+#                     print("Hinge Scale:", hinge_scale, "Overlap:", overlap)
+#                     print("Sector Sizes:", sector_sizes)
+        
+#             else:
+                                            
+#                 # calculate hinge scale
+#                 # calculate difference in deformation at hinge boundary from least uniform sector
+#                 boundary_max = np.max(np.array([lrmsd[edgei[bi]], lrmsd[edgej[bi]]]))
+
+#                 si = verts_to_sectors[edgei[bi]]
+#                 sj = verts_to_sectors[edgej[bi]]
+
+#                 si_min = np.min(lrmsd[np.array(list(sectors_to_verts[si]), np.int32)])
+#                 sj_min = np.min(lrmsd[np.array(list(sectors_to_verts[sj]), np.int32)])
+
+#                 hinge_scale = boundary_max - np.max(np.array([si_min, sj_min]))
+            
+#                 if hinge_scale > max_hinge_scale:
+#                     max_hinge_scale = hinge_scale
+#                     selected_edge = bi
+                    
+#                     overlap = deform.calc_hinge_overlap(sectors_to_verts, pos, disp, linear=linear)
+                
+#                     max_hinge_overlap = overlap
+                    
+                    
+#                     print(i, "/", len(boundary_edges))
+#                     print("Hinge Scale:", hinge_scale, "Overlap:", overlap)
+#                     print("Sector Sizes:", sector_sizes)
+                    
+            
+#         # add selected edge to list of boundary edges
+#         sector_boundary_edges.add(selected_edge)
+                  
+            
+#     if len(sector_boundary_edges) == 0:
+#         return 0.0, 0.0, None, None, None
+        
+        
+#     reduced_skeleton = List(skeleton-set(sector_boundary_edges))
+#     # remove boundary edge and identify sectors
+#     sectors_to_verts , verts_to_sectors = find_sectors(reduced_skeleton, NV, edgei, edgej)
+    
+#     sector_sizes = [len(sectors_to_verts[si]) for si in range(len(sectors_to_verts))]
+    
+#     print("Hinge Scale:", max_hinge_scale, "Overlap:", max_hinge_overlap)
+#     print("Sector Sizes:", sector_sizes)
+        
+#     return max_hinge_scale, max_hinge_overlap, sectors_to_verts, verts_to_sectors, List(sector_boundary_edges)
     
  

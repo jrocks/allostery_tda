@@ -3,9 +3,6 @@ import sys, os
 from IPython.display import display
 
 
-# sys.path.insert(0, '../../lib_persistent_homology/')
-# sys.path.insert(0, '../../lib_persistent_homology/python_src/')
-
 import numpy as np
 import pandas as pd
 
@@ -20,14 +17,6 @@ from openbabel import openbabel as ob
 element_rad = {'N':1.55, 'C': 1.7, 'O':1.52, 'S': 1.8, 'F': 1.47,
                'FE': 1.25, 'CA': 2.31, 'ZN': 1.39, 'P': 1.8, 'H': 1.2,
                'BR': 1.85}
-
-amino_code = {'ALA': 'A', 'ARG': 'R', 'ASN': 'N', 'ASP': 'D', 
-              'ASX': 'B', 'CYS': 'C', 'GLU': 'E', 'GLN': 'Q', 
-              'GLX': 'Z', 'GLY': 'G', 'HIS': 'H', 'ILE': 'I', 
-              'LEU': 'L', 'LYS': 'K', 'MET': 'M', 'PHE': 'F', 
-              'PRO': 'P', 'SER': 'S', 'THR': 'T', 'TRP': 'W', 
-              'TYR': 'Y', 'VAL': 'V'}
-
 
 def preprocess(prot_id, PDB_id, check=False):
     """
@@ -58,19 +47,90 @@ def preprocess(prot_id, PDB_id, check=False):
     os.system('mkdir -p data/' + prot_id)
 
     PDB_file = "data/" + prot_id + "/" + PDB_id + ".pdb"
-    mmCIF_file = "data/" + prot_id + "/" + PDB_id + ".cif"
+    mmCIF_file = "data/" + prot_id + "/" + PDB_id + "_header.cif"
     
     # Download pdb file
     if check and not os.path.exists(PDB_file):
         urllib.request.urlretrieve("https://files.rcsb.org/download/" + PDB_id + ".pdb1", PDB_file)
-        urllib.request.urlretrieve("https://files.rcsb.org/download/" + PDB_id + ".cif", mmCIF_file)
+        urllib.request.urlretrieve("https://files.rcsb.org/header/" + PDB_id + ".cif", mmCIF_file)
     
     # load structure
     parser = PDB.PDBParser()
     structure = parser.get_structure(PDB_id, PDB_file)
+     
+    # assemble biological assembly
+    structure, orig_to_full_chain_map = assemble_structure(PDB_id, structure)
+    
+    # Write full structure to pdb file
+    io = PDB.PDBIO()
+    io.set_structure(structure)
+    io.save('data/' + prot_id + '/' + PDB_id + '_full.pdb') 
+    
+    print("Original to full chain map:", orig_to_full_chain_map)
+
+    # Save chain map
+    with open('data/'+prot_id+'/chain_maps_'+PDB_id+'.pkl', 'wb') as pkl_file:
+        full_to_orig_chain_map = {orig_to_full_chain_map[key]: key for key in orig_to_full_chain_map}
+        data = {'full_to_orig_chain_map': full_to_orig_chain_map, 'orig_to_full_chain_map': orig_to_full_chain_map}
+        pickle.dump(data, pkl_file)
+       
+    # clean structure
+    structure, select = clean_structure(structure)
+    
+    # clean special cases
+    # structure = clean_special(PDB_id, structure)
+    
+    # Write full structure to pdb file
+    io = PDB.PDBIO()
+    io.set_structure(structure)
+    io.save('data/' + prot_id + '/' + PDB_id + '_full_clean.pdb', select=select) 
+           
+    # convert to mmCIF file format for arpeggio
+    
+    # Write structure back to mmCIF file
+    io = PDB.mmcifio.MMCIFIO()
+    io.set_structure(structure)
+    io.save('data/' + prot_id + '/' + PDB_id + '_full_clean.cif', select=select) 
+    
+    # get mmCIF header dictionary from original file
+    mmcif_dict = PDB.MMCIF2Dict.MMCIF2Dict(mmCIF_file)
         
+    # get mmCIF header dictionary from new mmCIF file
+    full_mmcif_dict = PDB.MMCIF2Dict.MMCIF2Dict('data/' + prot_id + '/' + PDB_id + '_full_clean.cif')
+        
+    # copy some parts of the header
+    full_mmcif_dict['_chem_comp.id'] =  mmcif_dict['_chem_comp.id']
+    full_mmcif_dict['_chem_comp.type' ] =  mmcif_dict['_chem_comp.type' ]
+    full_mmcif_dict['_chem_comp.mon_nstd_flag' ] =  mmcif_dict['_chem_comp.mon_nstd_flag' ]
+    full_mmcif_dict['_chem_comp.name' ] =  mmcif_dict['_chem_comp.name' ]
+    full_mmcif_dict['_chem_comp.pdbx_synonyms' ] =  mmcif_dict['_chem_comp.pdbx_synonyms' ]
+    full_mmcif_dict['_chem_comp.formula' ] =  mmcif_dict['_chem_comp.formula' ]
+    full_mmcif_dict['_chem_comp.formula_weight'] =  mmcif_dict['_chem_comp.formula_weight'] 
+    
+     # Write structure back to mmCIF file again
+    io.set_dict(full_mmcif_dict)
+    io.save('data/' + prot_id + '/' + PDB_id + '_full_clean.cif') 
+    
+    print("Computing interactions...")
+    # Compute intra-protein interactions    
+    os.system('pdbe-arpeggio -sa data/{0}/{1}_full_clean.cif -o data/{0}/'.format(prot_id, PDB_id))
+    
+    # rename file
+    os.rename(f'data/{prot_id}/{PDB_id}_full_clean.json', f'data/{prot_id}/{PDB_id}.json')
+
+    print("Completed preprocessing...")
+
+    
+def assemble_structure(PDB_id, structure):
+    """
+    Assembles full biological assembly.
+    
+    """
+    
+    # initialize empty model for assembly of full structure
     full_model = PDB.Model.Model(0)
     
+    # map of chains ids from original pdb to assembled structure
     orig_to_full_chain_map = {}
     
     # combine all models (representing all pieces of full biological assembly) into single structure
@@ -103,57 +163,86 @@ def preprocess(prot_id, PDB_id, check=False):
     full_structure = PDB.Structure.Structure(PDB_id)
     full_structure.add(full_model)
     
+    return full_structure, orig_to_full_chain_map
     
-    print("Original to full chain map:", orig_to_full_chain_map)
+               
+def clean_structure(structure):
+    """
+    
+    This function is adapted from the clean_pdb.py script from the pdbtools library created by Harry Jubb.
+    URL: https://github.com/harryjubb/pdbtools.git
+    """
+      
+    model = structure[0]
+    
+    # determine polypeptides and get list of all polypeptide residues
+    ppb = PDB.Polypeptide.PPBuilder()
+    polypeptides = ppb.build_peptides(model, aa_only=False)
 
+    polypeptide_residues = set()
+    for pp in polypeptides:
+        for res in pp:
+            polypeptide_residues.add(res)
+            
     
-    # Save chain map
-    with open('data/'+prot_id+'/chain_maps_'+PDB_id+'.pkl', 'wb') as pkl_file:
-        full_to_orig_chain_map = {orig_to_full_chain_map[key]: key for key in orig_to_full_chain_map}
-        data = {'full_to_orig_chain_map': full_to_orig_chain_map, 'orig_to_full_chain_map': orig_to_full_chain_map}
-        pickle.dump(data, pkl_file)
-        
-        
-     # Write structure back to mmCIF file
-    io = PDB.mmcifio.MMCIFIO()
-    io.set_structure(full_structure)
-    io.save('data/' + prot_id + '/' + PDB_id + '.full.cif') 
-       
-    # get mmCIF header dictionary from original file
-    mmcif_dict = PDB.MMCIF2Dict.MMCIF2Dict(mmCIF_file)
-        
-    # get mmCIF header dictionary from new mmCIF file
-    full_mmcif_dict = PDB.MMCIF2Dict.MMCIF2Dict('data/' + prot_id + '/' + PDB_id + '.full.cif')
-        
-    # copy some parts of the header
-    full_mmcif_dict['_chem_comp.id'] =  mmcif_dict['_chem_comp.id']
-    full_mmcif_dict['_chem_comp.type' ] =  mmcif_dict['_chem_comp.type' ]
-    full_mmcif_dict['_chem_comp.mon_nstd_flag' ] =  mmcif_dict['_chem_comp.mon_nstd_flag' ]
-    full_mmcif_dict['_chem_comp.name' ] =  mmcif_dict['_chem_comp.name' ]
-    full_mmcif_dict['_chem_comp.pdbx_synonyms' ] =  mmcif_dict['_chem_comp.pdbx_synonyms' ]
-    full_mmcif_dict['_chem_comp.formula' ] =  mmcif_dict['_chem_comp.formula' ]
-    full_mmcif_dict['_chem_comp.formula_weight'] =  mmcif_dict['_chem_comp.formula_weight'] 
+    removed_atoms = set()
     
-     # Write structure back to mmCIF file again
-    io.set_dict(full_mmcif_dict)
-    io.save('data/' + prot_id + '/' + PDB_id + '.full.cif') 
-    
-    # Also write structure to pdb file
-    io = PDB.PDBIO()
-    io.set_structure(full_structure)
-    io.save('data/' + prot_id + '/' + PDB_id + '.full.pdb') 
-    
-#     # Clean pdb file
-#     # os.system('python ~/pdbtools/clean_pdb.py {}'.format('../data/' + prot_id + '/pdb' + PDB_id + '.full.pdb'))
-    
-#     # Check for special cases
-#     check_special(PDB_id, 'data/' + prot_id + '/' + PDB_id + '.full.cif')
-        
-    print("Computing interactions...")
-    # Compute intra-protein interactions    
-    os.system('pdbe-arpeggio -sa data/{0}/{1}.full.cif -o data/{0}/'.format(prot_id, PDB_id))    
+    for res in model.get_residues():
 
-    print("Completed preprocessing...")
+        is_poly_res = (res in polypeptide_residues)
+        
+        # change HETATM record to ATOM if residue is located in polypeptide
+        (het_flag, seq_id, insert_code) = res.get_id()
+        if is_poly_res and not het_flag.isspace():
+            het_flag = ' '
+            res.id = (het_flag, seq_id, insert_code)
+
+        # LOOP THROUGH ATOMS TO OUTPUT
+        for atom in res.get_atoms():
+
+            # DEAL WITH DISORDERED ATOMS
+            # choose selected disordered atom by setting the altloc to empty
+            if atom.is_disordered():
+                
+                altloc = atom.get_altloc()
+                
+                for altatom in atom.disordered_get_list():
+                    
+                    if altatom.get_altloc() != altloc:
+                        removed_atoms.add(altatom)
+                    else:
+                        altatom.set_altloc(" ")
+                        altatom.set_occupancy(1.0)
+                
+            # convert selenomethionines to methionines if they occur within peptide
+            if is_poly_res and (res.resname == 'MSE' or res.resname == 'MET'):
+            
+                res.resname = 'MET'
+                
+                if atom.name == 'SE' and atom.element == 'SE':
+                    atom.id = 'SD'
+                    atom.name = 'SD'
+                    atom.fullname = 'SD'
+                    atom.element = 'S'
+                    
+            # fix atom anming bug
+            if len(atom.name) == 3:
+                atom.name = ' ' + atom.name
+                
+                
+    # selection class
+    # this deals with alternative identifiers and occupancy that is less than 1.0
+    # arbitrarily chooses first identifier by default
+    class RemoveSelect(PDB.Select):
+        def accept_atom(self, atom):
+            if atom in removed_atoms:
+                print("Removing disordered atom:", atom, atom.get_full_id())
+                return False
+            else:
+                return True
+
+    return structure, RemoveSelect()
+
 
 def check_special(PDB_id, PDB_file):
         
@@ -169,7 +258,8 @@ def check_special(PDB_id, PDB_file):
         with open(PDB_file, 'w') as fn:
             for line in lines:
                 fn.write(line)
-    # this pdb file has uneccessary digits for chains, but necessary for HETATMS
+    # this pdb file has extra digits for atom ids that corresond to chains, 
+    # but extra digits are still necessary for HETATMS to distinguish from regular atoms
     elif PDB_id=="1pj2" or PDB_id=="1qr6":
         with open(PDB_file, 'r') as fn:
             lines = fn.readlines()
@@ -180,8 +270,11 @@ def check_special(PDB_id, PDB_file):
            
         with open(PDB_file, 'w') as fn:
             for line in lines:
-                fn.write(line)    
-        
+                fn.write(line) 
+
+
+    
+
     
 def load_protein(prot_id, PDB_id, chain_list, reg_bind_list, sub_bind_list, exclude_bond_types=[]):
     
@@ -418,7 +511,7 @@ def load_selection(prot_id, selection):
     (PDB_id, chain_id, chain_copy, res_name, res_id, atom_name) = selection
         
     parser = PDB.MMCIFParser()
-    structure = parser.get_structure(PDB_id, 'data/' + prot_id + '/' + PDB_id + '.full.cif')
+    structure = parser.get_structure(PDB_id, 'data/' + prot_id + '/' + PDB_id + '_full_clean.cif')
         
     
     with open('data/' + prot_id + '/chain_maps_' + PDB_id + '.pkl', 'rb') as pkl_file:
@@ -472,7 +565,7 @@ def load_bonds(prot_id, PDB_id, exclude_bond_types=[]):
     
     
     # load pdb file to mad atom indices to anom names
-    mmCIF_file = 'data/' + prot_id + '/' + PDB_id + '.full.cif'
+    mmCIF_file = 'data/' + prot_id + '/' + PDB_id + '_full_clean.cif'
     
     mmcif_dict = PDB.MMCIF2Dict.MMCIF2Dict(mmCIF_file)
         
@@ -490,7 +583,7 @@ def load_bonds(prot_id, PDB_id, exclude_bond_types=[]):
         
     print(full_to_orig_chain_map)
     
-    PDB_file = 'data/' + prot_id + '/' + PDB_id + '.full.pdb'
+    PDB_file = 'data/' + prot_id + '/' + PDB_id + '_full_clean.pdb'
     
     # load pdb file again using openbabel to find bonds based on standard chemistry of amino acids and polypeptides
     ob_conv = ob.OBConversion()
