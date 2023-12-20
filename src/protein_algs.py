@@ -6,6 +6,10 @@ from IPython.display import display
 import numpy as np
 import pandas as pd
 
+from collections import defaultdict
+
+from numba.typed import List
+
 import Bio.PDB as PDB
 
 import mech_deform as deform
@@ -22,7 +26,11 @@ def merge_structures(df_ref, df_def):
         
     df_prot_merged.drop(columns=['active_site_ref', 'active_site_def', 'allo_site_ref', 'allo_site_def'], inplace=True)
 #     display(df_prot_merged)
-    
+
+        
+    # The merge_index uniquely identifies atoms in the merged dataframe.
+    # This can then be used to match atoms across the reference, deformed, and bond dataframes.
+    # It refers to the row number in the merged protein dataframe.
     df_def['merge_index'] = -1
     df_def.loc[df_prot_merged.index, 'merge_index'] = np.arange(len(df_prot_merged.index))
     
@@ -67,15 +75,13 @@ def merge_structures(df_ref, df_def):
             
     return df_prot_merged
 
-def merge_bonds(df_prot, df_bonds, df_prot_merged):
+def merge_bonds(df_prot, df_bonds):
     
+    # The merge index matches the row number of the merged dataframe
     merge_indexi = df_prot.loc[df_bonds.reset_index().set_index(['chain_indexi', 'res_idi', 'atom_namei']).index.values, 'merge_index'].values
     merge_indexj = df_prot.loc[df_bonds.reset_index().set_index(['chain_indexj', 'res_idj', 'atom_namej']).index.values, 'merge_index'].values
 
     valid = (merge_indexi != -1) & (merge_indexj != -1)
-    
-#     edgei = merge_indexi[valid]
-#     edgej = merge_indexj[valid]
     
     # make merged bonds have the same index structure as df_bonds, but just add merge_index and limit to relevant nodes
     df_bonds_merged = df_bonds[valid].copy()
@@ -86,7 +92,78 @@ def merge_bonds(df_prot, df_bonds, df_prot_merged):
     return df_bonds_merged
             
     
+def trim_disconnected(df_prot_merged, df_bonds_merged, df_ref, df_def):
+    
+    # Find the connected components
+    NV = len(df_prot_merged.index)
+    edgei = df_bonds_merged['edgei'].values
+    edgej = df_bonds_merged['edgej'].values
+    skeleton = List(np.arange(len(edgei)))
+    sectors_to_verts, verts_to_sectors = topo.find_sectors(skeleton, NV, edgei, edgej)
+    
+    # Record the sector sizes
+    sector_sizes = []
+    for verts in sectors_to_verts:
+        sector_sizes.append(len(verts))
+    
+    # Create aand print histogram of sector sizes 
+    size_hist = defaultdict(int)
+    for size in sector_sizes:
+        size_hist[size] += 1
 
+    print("Sector size count:", dict(size_hist))
+        
+    # Identify the bigger sector
+    imax = np.argmax(sector_sizes)
+    keep_verts = sorted(sectors_to_verts[imax])
+    
+    trim_verts = set()
+    for i in range(len(sectors_to_verts)):
+        if i != imax:
+            trim_verts |= set(sectors_to_verts[i])
+    
+    print(f"Trimming {len(trim_verts)} atoms...")
+    
+    # Trim edge and reindex
+    full_to_trim_index = {v: i for i, v in enumerate(keep_verts)}
+    full_to_trim_index.update({v: -1 for v in trim_verts})
+        
+    df_prot_merged = df_prot_merged.iloc[keep_verts].copy()
+        
+    df_bonds_merged = df_bonds_merged.copy()
+    df_bonds_merged['edgei'] = df_bonds_merged['edgei'].replace(full_to_trim_index)
+    df_bonds_merged['edgej'] = df_bonds_merged['edgej'].replace(full_to_trim_index)
+    df_bonds_merged = df_bonds_merged.query("edgei != -1 and edgej != -1").copy()
+            
+    # Reindex protein dataframes
+    df_ref = df_ref.copy()
+    df_ref['merge_index'] = df_ref['merge_index'].replace(full_to_trim_index)
+    
+    df_def = df_def.copy()
+    df_def['merge_index'] = df_def['merge_index'].replace(full_to_trim_index)
+    
+    
+#     # Find the connected components
+#     NV = len(df_prot_merged.index)
+#     edgei = df_bonds_merged['edgei'].values
+#     edgej = df_bonds_merged['edgej'].values
+#     skeleton = List(np.arange(len(edgei)))
+#     sectors_to_verts, verts_to_sectors = topo.find_sectors(skeleton, NV, edgei, edgej)
+    
+#     # Record the sector sizes
+#     sector_sizes = []
+#     for verts in sectors_to_verts:
+#         sector_sizes.append(len(verts))
+    
+#     # Create aand print histogram of sector sizes 
+#     size_hist = defaultdict(int)
+#     for size in sector_sizes:
+#         size_hist[size] += 1
+
+#     print("Sector size count:", dict(size_hist))
+    
+    return df_prot_merged, df_bonds_merged, df_ref, df_def
+    
 
 def calc_local_rmsd(df_merged, l0=15):
     
@@ -200,6 +277,8 @@ def find_coop_strain_path(df_merged, df_bonds_merged):
     
 
 def find_hinge(df_merged, df_bonds_merged, N_sectors=2, min_size=None):
+    
+    NV = len(df_merged.index)
     
     edgei = df_bonds_merged['edgei'].values
     edgej = df_bonds_merged['edgej'].values

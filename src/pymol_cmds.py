@@ -331,7 +331,7 @@ def show_topo(index):
                         cmd.show("spheres", sele)
                         cmd.set("sphere_transparency", 0.0, sele)
                
-            color = smaps[sector[row['merge_index']]].to_rgba(lrmsd[row['merge_index']], bytes=True)[0:3]
+            color = smaps[sector[row['merge_index']]%len(smaps)].to_rgba(lrmsd[row['merge_index']], bytes=True)[0:3]
             color_hex = '0x%02x%02x%02x' % (color[0], color[1], color[2])
             cmd.color(color_hex, sele)
             cmd.set("cartoon_transparency", 0.0, sele)

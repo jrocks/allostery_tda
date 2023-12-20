@@ -317,6 +317,10 @@ def find_hinge(skeleton, boundary_edges, edgei, edgej, pos, disp, lrmsd, N_secto
     if min_size is None:
         min_size = DIM
         
+    stov, _ = find_sectors(skeleton, NV, edgei, edgej)
+    
+    print([len(sector) for sector in stov])
+        
     # first create coarse-grained skeleton where each sector in original skeleton is a node and each boundary edge is an edge
     skeleton = set(skeleton)
     reduced_skeleton = List(skeleton-set(boundary_edges))
@@ -369,7 +373,7 @@ def find_hinge(skeleton, boundary_edges, edgei, edgej, pos, disp, lrmsd, N_secto
 
             # calculate min sector size
             sector_sizes = [np.sum(np.array([len(coarse_sectors_to_verts[vi]) for vi in sectors_to_verts[si]], np.int32)) for si in range(len(sectors_to_verts))]
-                        
+                                    
             min_sector_size = np.array(sector_sizes).min()
 
 
@@ -439,7 +443,7 @@ def find_hinge(skeleton, boundary_edges, edgei, edgej, pos, disp, lrmsd, N_secto
         # add selected edge to list of boundary edges
         if selected_edge != -1:
             sector_boundary_edges.add(selected_edge)
-                  
+        
 
     if len(sector_boundary_edges) == 0:
         return 0.0, 0.0, None, None, None

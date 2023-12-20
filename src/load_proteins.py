@@ -53,7 +53,7 @@ def preprocess(prot_id, PDB_id, check=False):
     if check and not os.path.exists(PDB_file):
         urllib.request.urlretrieve("https://files.rcsb.org/download/" + PDB_id + ".pdb1", PDB_file)
         urllib.request.urlretrieve("https://files.rcsb.org/header/" + PDB_id + ".cif", mmCIF_file)
-    
+        
     # load structure
     parser = PDB.PDBParser()
     structure = parser.get_structure(PDB_id, PDB_file)
@@ -74,11 +74,11 @@ def preprocess(prot_id, PDB_id, check=False):
         data = {'full_to_orig_chain_map': full_to_orig_chain_map, 'orig_to_full_chain_map': orig_to_full_chain_map}
         pickle.dump(data, pkl_file)
        
+    # clean special cases
+    structure = clean_special(PDB_id, structure)
+    
     # clean structure
     structure, select = clean_structure(structure)
-    
-    # clean special cases
-    # structure = clean_special(PDB_id, structure)
     
     # Write full structure to pdb file
     io = PDB.PDBIO()
@@ -110,7 +110,7 @@ def preprocess(prot_id, PDB_id, check=False):
      # Write structure back to mmCIF file again
     io.set_dict(full_mmcif_dict)
     io.save('data/' + prot_id + '/' + PDB_id + '_full_clean.cif') 
-    
+                
     print("Computing interactions...")
     # Compute intra-protein interactions    
     os.system('pdbe-arpeggio -sa data/{0}/{1}_full_clean.cif -o data/{0}/'.format(prot_id, PDB_id))
@@ -168,7 +168,6 @@ def assemble_structure(PDB_id, structure):
                
 def clean_structure(structure):
     """
-    
     This function is adapted from the clean_pdb.py script from the pdbtools library created by Harry Jubb.
     URL: https://github.com/harryjubb/pdbtools.git
     """
@@ -210,6 +209,7 @@ def clean_structure(structure):
                     
                     if altatom.get_altloc() != altloc:
                         removed_atoms.add(altatom)
+                        # print("Removing disordered atom:", altatom.get_full_id())
                     else:
                         altatom.set_altloc(" ")
                         altatom.set_occupancy(1.0)
@@ -228,52 +228,54 @@ def clean_structure(structure):
             # fix atom anming bug
             if len(atom.name) == 3:
                 atom.name = ' ' + atom.name
-                
-                
+         
+    print("Removing", len(removed_atoms), "disordered atoms.")
+          
     # selection class
     # this deals with alternative identifiers and occupancy that is less than 1.0
     # arbitrarily chooses first identifier by default
     class RemoveSelect(PDB.Select):
         def accept_atom(self, atom):
             if atom in removed_atoms:
-                print("Removing disordered atom:", atom, atom.get_full_id())
+                # print("Removing disordered atom:", atom, atom.get_full_id())
                 return False
             else:
                 return True
 
     return structure, RemoveSelect()
 
-
-def check_special(PDB_id, PDB_file):
-        
-    # this pdb file has an extra digit in the thousands column for each residue
-    # need to iterate through each row of clean pdb file, delete column, and replace zeros with white space
-    if PDB_id == "1vg8":
-        with open(PDB_file, 'r') as fn:
-            lines = fn.readlines()
-            
-        for i in range(len(lines)):
-            lines[i] = lines[i][:22] + str(int(lines[i][23:26])).rjust(4) + lines[i][26:]
-           
-        with open(PDB_file, 'w') as fn:
-            for line in lines:
-                fn.write(line)
-    # this pdb file has extra digits for atom ids that corresond to chains, 
-    # but extra digits are still necessary for HETATMS to distinguish from regular atoms
-    elif PDB_id=="1pj2" or PDB_id=="1qr6":
-        with open(PDB_file, 'r') as fn:
-            lines = fn.readlines()
-            
-        for i in range(len(lines)):
-            if lines[i].startswith("ATOM"):
-                lines[i] = lines[i][:22] + str(int(lines[i][23:26])).rjust(4) + lines[i][26:]
-           
-        with open(PDB_file, 'w') as fn:
-            for line in lines:
-                fn.write(line) 
-
-
+def clean_special(PDB_id, structure):
     
+    """
+    Deal with pdb files that have specific one-time issues that need to be cleaned up.
+    """
+    
+    if PDB_id in {'1vg8', '1pj2', '1qr6'} :
+        
+        # These PDB file has an extra digit in the thousands column for each residue in the polypeptide chain
+        model = structure[0]
+    
+         # determine polypeptides and get list of all polypeptide residues
+        ppb = PDB.Polypeptide.PPBuilder()
+        polypeptides = ppb.build_peptides(model, aa_only=False)
+
+        polypeptide_residues = set()
+        for pp in polypeptides:
+            for res in pp:
+                polypeptide_residues.add(res)
+            
+        for res in model.get_residues():
+        
+            if res in polypeptide_residues:
+                (het_flag, seq_id, insert_code) = res.get_id()
+                # only keep first three digits
+                seq_id = seq_id % 1000
+
+                res.id = (het_flag, seq_id, insert_code)
+                
+                
+    return structure
+
 
     
 def load_protein(prot_id, PDB_id, chain_list, reg_bind_list, sub_bind_list, exclude_bond_types=[]):
