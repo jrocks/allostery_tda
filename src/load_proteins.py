@@ -24,7 +24,7 @@ def preprocess(prot_id, PDB_id, check=False):
 
     Downloads and preprocesses pdb files. Preprocessing steps include:
     1. Download pdb file via BioPython.
-    2. Clean pdb file using pdb-tools.
+    2. Clean pdb files.
     3. Construct new pdb file of full x-ray structure. In this full structure, each chain copy is included explicitly as an additional chain with exactly one copy.
     4. Compute interactions using Arpeggio.
 
