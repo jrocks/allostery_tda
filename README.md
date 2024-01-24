@@ -1,2 +1,2 @@
-# allo_topo
+# allostery_tda
 Topological analysis for allosteric proteins.
